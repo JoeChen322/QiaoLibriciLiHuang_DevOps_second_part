@@ -81,4 +81,4 @@ jobs:
     steps:
       - name: Submit SLURM Job from local runner
         run: |
-          ssh zqiao000@loginin.g100.cineca.it "cd ~/seproject && sbatch job_script.slurm"
+          ssh zqiao000@login.g100.cineca.it "cd ~/seproject && sbatch job_script.slurm"
