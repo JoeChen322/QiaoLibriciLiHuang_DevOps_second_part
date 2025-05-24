@@ -94,7 +94,10 @@ jobs:
         ssh-keyscan -H ${{ secrets.SLURM_HOST }} >> ~/.ssh/known_hosts
       env:
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      
+    - name: Test SSH connection
+      run: 
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} echo "SSH connected!"
+  
     - name: Test SSH key
       run: |
         ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
