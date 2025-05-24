@@ -57,18 +57,18 @@ jobs:
         sudo tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz
         echo "/usr/local/go/bin" | sudo tee -a /etc/environment > /dev/null
         echo "PATH=$PATH:/usr/local/go/bin" >> $GITHUB_ENV
-        
+    - name : setup Env for GO
+      run: echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc && source ~/.bashrc
+      
     - name: Install Singularity
       run: |
-        export PATH=$PATH:/usr/local/go/bin
-        export VERSION=3.9.9
-        wget https://github.com/sylabs/singularity/releases/download/v$VERSION/singularity-ce-$VERSION.tar.gz
-        tar -xzf singularity-ce-$VERSION.tar.gz
-        cd singularity-ce-$VERSION
-        ./mconfig
-        make -C builddir
-        sudo make -C builddir install
-        singularity version
+        export VERSION=3.8.7 && # adjust this as necessary \
+        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz \
+        && sudo tar -xzf singularity-${VERSION}.tar.gz \
+        && cd singularity-${VERSION} \
+        && sudo ./mconfig \
+        && sudo make -C builddir \
+        && sudo make -C builddir install
         
     - name: Build Singularity Image
       run: sudo singularity build grayscale.sif Singularity.def
