@@ -1,20 +1,98 @@
-name: SSH Test To G100
+name: Remote Build Singularity Container and Submit to SLURM
 
-on:
-  workflow_dispatch:
+on: [push, pull_request]
 
 jobs:
-  test-ssh:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Setup SSH
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Install dependencies like MPI And sshpass
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          mpich \
+          libmpich-dev \
+          tzdata \
+          build-essential \
+          uuid-dev \
+          libgpgme11-dev \
+          squashfs-tools \
+          libseccomp-dev \
+          wget \
+          pkg-config \
+          git \
+          cryptsetup \
+          sshpass
+
+    - name: Initialize and update Google test submodules
+      run: git submodule update --init --recursive
+
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v1
+
+    - name: Configure CMake
+      run: cmake -S . -B build
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Install Go
+      run: |
+        wget https://golang.org/dl/go1.20.3.linux-amd64.tar.gz
+        sudo tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz
+        echo "/usr/local/go/bin" | sudo tee -a /etc/environment > /dev/null
+        echo "PATH=$PATH:/usr/local/go/bin" >> $GITHUB_ENV
+        
+    - name: Install Singularity
+      run: |
+        export PATH=$PATH:/usr/local/go/bin
+        export VERSION=3.9.9
+        wget https://github.com/sylabs/singularity/releases/download/v$VERSION/singularity-ce-$VERSION.tar.gz
+        tar -xzf singularity-ce-$VERSION.tar.gz
+        cd singularity-ce-$VERSION
+        ./mconfig
+        make -C builddir
+        sudo make -C builddir install
+        singularity version
+        
+    - name: Check Sylabs Token For Remote Build 
+      run: echo ${{ secrets.SYLABS_TOKEN }}
+  
+    - name: Remote Build Singularity Container
+      run: |
+        export PATH=$PATH:/usr/local/go/bin
+        echo ${{ secrets.SYLABS_TOKEN }} > ~/tokenfile
+        singularity remote login --tokenfile ~/tokenfile
+        singularity build --remote grayscale.sif Singularity.def
+   
+    - name: Upload Singularity Image SIF File To Repository
+      run: |
+        export PATH=$PATH:/usr/local/go/bin
+        singularity push -U grayscale.sif library://qiao/qiao/grayscale:latest
+      env:
+        SYLABS_TOKEN: ${{ secrets.SYLABS_TOKEN }}
+
+    - name: Remove old host-key And Add new host-key to known_hosts
       run: |
         mkdir -p ~/.ssh
-        printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan -H loginin.g100.cineca.it >> ~/.ssh/known_hosts
+        touch ~/.ssh/known_hosts
+        ssh-keygen -R login.g100.cineca.it
+        ssh-keyscan -H login.g100.cineca.it >> ~/.ssh/known_hosts
 
-    - name: Test SSH connection to G100
+    - name: Set up SSH
       run: |
-        ssh -i ~/.ssh/id_ed25519 zqiao000@login.g100.cineca.it "echo ✅ GitHub Actions SSH Success"
+          mkdir -p ~/.ssh
+          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          #echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SLURM_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Submit SLURM Job
+      run: |
+          scp -i ~/.ssh/id_ed25519 job_script.slurm ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject/
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} \
+            "cd ~/seproject && sbatch job_script.slurm"
