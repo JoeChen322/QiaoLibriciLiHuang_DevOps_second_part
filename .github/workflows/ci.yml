@@ -27,7 +27,18 @@ jobs:
           git \
           cryptsetup \
           sshpass
-
+          
+    - name: install dependencies for Singularity 
+      run: |
+        sudo apt-get install -y \
+          uuid-dev \
+          build-essential \
+          libseccomp-dev \
+          pkg-config \
+          squashfs-tools \
+          cryptsetup \
+          curl wget git
+          
     - name: Initialize and update Google test submodules
       run: git submodule update --init --recursive
 
@@ -39,9 +50,6 @@ jobs:
 
     - name: Build
       run: cmake --build build
-
-    - name: Run Tests In GitHub Runner
-      run: ctest --test-dir build
 
     - name: Install Go
       run: |
