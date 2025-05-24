@@ -1,38 +1,43 @@
 #!/bin/bash
 
-#SBATCH --job-name=grayscale_job           # job name
-#SBATCH --output=grayscale.txt             # 输出文件
-#SBATCH --error=grayscale.txt              # 错误输出文件（与输出文件相同）
-#SBATCH --time=0:10:00                     # 最长运行时间
-#SBATCH --ntasks=1                         # 运行的任务数（进程数）
-#SBATCH --nodes=1                          # 运行所需节点数
-#SBATCH --partition=g100_all_serial        # 指定分区
+# Set job name
+#SBATCH --job-name=matrix_mult_job       # Job name
 
-# 加载 Singularity 模块
+# Redirect output and error
+#SBATCH --output=matrix_mult_output.txt  # Output file
+#SBATCH --error=matrix_mult_error.txt    # Error file
+
+# Set Parameters
+#SBATCH --time=0:10:00                   # Time Limit (hh:mm:ss)   
+#SBATCH --ntasks=2                       # Number of tasks
+#SBATCH --nodes=1                        # Number of nodes
+#SBATCH --partition=g100_all_serial      # Partition to submit job
+
+# Module Load for Singularity
 module load singularity
 
-# 防止 "No Protocol specified" 警告
+# --------------------------------------------------------------------------------#
+# This line is necessary to prevent "No Protocol specified" warning from appearing.
+# --------------------------------------------------------------------------------#    
 export HWLOC_COMPONENTS=-gl
 
-# 创建并设置 TMPDIR（若已存在 ~/tmp 则可省略）
+# Set TMPDIR to a writable directory (have done mkdir ~/tmp in advance, no need to create) 
 export TMPDIR=~/tmp
-mkdir -p $TMPDIR
 
-# 设置 MPI 所需临时目录
+# Set Open MPI environment variables to use the TMPDIR, which is a writable directory.
 export OMPI_MCA_tmpdir_base=$TMPDIR
 export OMPI_MCA_orte_tmpdir_base=$TMPDIR
 export OMPI_MCA_plm_rsh_agent="ssh :rsh"
+
+# Set MPI to use TCP as the communication protocol
 export OMPI_MCA_btl=self,tcp
 
-# 设置 Singularity 缓存目录
+# Ensure Singularity TMP and Cache directories are set to writable locations
 export SINGULARITY_TMPDIR=$TMPDIR/singularity_tmp
 export SINGULARITY_CACHEDIR=$TMPDIR/singularity_cache
-mkdir -p $SINGULARITY_TMPDIR $SINGULARITY_CACHEDIR
 
-# -------------------------
-# 执行程序（容器已放在当前目录）
-# -------------------------
-
-singularity exec ./grayscale.sif /opt/app/build/convert_grayscale input output Average
-
-singularity exec ./grayscale.sif /opt/app/build/test_grayscale > test_output.txt 2>&1
+# -----------------------------------------------------------------------------
+# Core Work Of This Job File: Do matrix multiplication by using MPI (2 tasks).
+# Run application inside singularity container (which is demaned by the project)
+# -----------------------------------------------------------------------------
+singularity exec ~/seproject/grayscale.sif mpirun -np 2 /opt/QiaoLibriciLiHuang_DevOps_second_part/main
