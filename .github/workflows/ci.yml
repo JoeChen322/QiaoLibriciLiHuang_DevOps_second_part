@@ -74,15 +74,11 @@ jobs:
     - name: Convert job.sh to UNIX line endings
       run: dos2unix job.sh || true
    
-    - name: Debug SSH key existence and permissions
-      run: |
-        ls -l ~/.ssh
-        echo "==== id_ed25519 ===="
-        cat ~/.ssh/id_ed25519 | head -n 5
-        echo "==== known_hosts ===="
-        cat ~/.ssh/known_hosts || true
-        echo "==== config ===="
-        cat ~/.ssh/config || true
+    - name: Debug private key length
+      run: echo "${#SSH_KEY}"
+      env:
+        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
 
     - name: Set up SSH key
       run: |
@@ -105,8 +101,6 @@ jobs:
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         SLURM_HOST: ${{ secrets.SLURM_HOST }}
         
-  
-    cat ~/.ssh/config || true
 
     - name: Test SSH connection
       run: ssh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} echo "✅ SSH works"
