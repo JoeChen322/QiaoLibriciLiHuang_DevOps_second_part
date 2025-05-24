@@ -13,15 +13,13 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
-    
-    - name: Checkout code with submodules
-      uses: actions/checkout@v3
       with:
-          submodules: recursive
+        submodules: recursive
+
     - name: Show submodule status
       run: git submodule status
-          
-    - name: install dependencies for Singularity 
+
+    - name: Install dependencies for Singularity
       run: |
         sudo apt-get install -y \
           uuid-dev \
@@ -31,84 +29,77 @@ jobs:
           squashfs-tools \
           cryptsetup \
           curl wget git
-    
-    - name: install Go
+
+    - name: Install Go
       run: |
         export GOVERSION=1.17.3 OS=linux ARCH=amd64
         wget -O /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz \
           https://dl.google.com/go/go${GOVERSION}.${OS}-${ARCH}.tar.gz
         sudo tar -C /usr/local -xzf /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-    
-    - name : setup Env for GO
+
+    - name: Setup Go in PATH
       run: echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc && source ~/.bashrc
-      
+
     - name: Install Singularity
       run: |
-        export VERSION=3.8.7 && # adjust this as necessary \
-        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz \
-        && sudo tar -xzf singularity-${VERSION}.tar.gz \
-        && cd singularity-${VERSION} \
-        && sudo ./mconfig \
-        && sudo make -C builddir \
-        && sudo make -C builddir install
-      
-    - name : verifyVersion
+        export VERSION=3.8.7
+        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz
+        sudo tar -xzf singularity-${VERSION}.tar.gz
+        cd singularity-${VERSION}
+        sudo ./mconfig
+        sudo make -C builddir
+        sudo make -C builddir install
+
+    - name: Check Singularity version
       run: singularity --version
-      
+
     - name: Build Singularity Image
-      run: |
-        sudo singularity build grayscale.sif Singularity.def
-    
+      run: sudo singularity build grayscale.sif Singularity.def
+
     - name: Run Application in Singularity
-      run: |
-        singularity run grayscale.sif input output Average
-    
+      run: singularity run grayscale.sif input output Average
+
     - name: Upload output images
       uses: actions/upload-artifact@v4
       with:
         name: pgm-results
         path: output/
-    
+
     - name: Upload grayscale.sif
       uses: actions/upload-artifact@v4
       with:
         name: grayscale-sif
         path: grayscale.sif
-        
+
     - name: Convert job.sh to UNIX line endings
       run: dos2unix job.sh || true
 
     - name: Set up SSH key
       run: |
-       mkdir -p ~/.ssh
-       echo "$SSH_KEY" > ~/.ssh/id_ed25519
-       chmod 600 ~/.ssh/id_ed25519
-       echo -e "Host *\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null\n" >> ~/.ssh/config
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        echo "$SSH_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+
+        echo -e "Host *\n\
+          StrictHostKeyChecking no\n\
+          UserKnownHostsFile=/dev/null\n\
+          LogLevel ERROR\n\
+          PubkeyAuthentication yes\n\
+          PreferredAuthentications=publickey\n\
+          GSSAPIAuthentication no\n\
+          HostbasedAuthentication no\n" > ~/.ssh/config
+
+        ssh-keyscan -H "$SLURM_HOST" >> ~/.ssh/known_hosts
       env:
-       SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        SLURM_HOST: ${{ secrets.SLURM_HOST }}
 
-      
-    - name: Test SSH key
-      run: |
-        ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
-            -o GSSAPIAuthentication=no \
-            -o PreferredAuthentications=publickey \
-            -o PubkeyAuthentication=yes \
-            ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} echo ok
+    - name: Test SSH connection
+      run: ssh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} echo "✅ SSH works"
 
-    - name: Transfer files to Galileo via scp
-      run: |
-        scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
-            -o GSSAPIAuthentication=no \
-            -o PreferredAuthentications=publickey \
-            -o PubkeyAuthentication=yes \
-            grayscale.sif job.sh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject/
+    - name: Transfer files to Galileo
+      run: scp grayscale.sif job.sh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject/
 
-    - name: Submit SLURM job via SSH
-      run: |
-        ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
-            -o GSSAPIAuthentication=no \
-            -o PreferredAuthentications=publickey \
-            -o PubkeyAuthentication=yes \
-            ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} \
-            "cd ~/seproject && sbatch job.sh"
+    - name: Submit SLURM job
+      run: ssh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} "cd ~/seproject && sbatch job.sh"
