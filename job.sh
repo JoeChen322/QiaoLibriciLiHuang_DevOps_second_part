@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=grayscale_job           # 作业名称
+#SBATCH --job-name=grayscale_job           # job name
 #SBATCH --output=grayscale.txt             # 输出文件
 #SBATCH --error=grayscale.txt              # 错误输出文件（与输出文件相同）
 #SBATCH --time=0:10:00                     # 最长运行时间
