@@ -74,9 +74,6 @@ jobs:
       with:
         name: grayscale-sif
         path: grayscale.sif
-        
-    - name: Convert job.sh to UNIX line endings
-      run: dos2unix job.sh || true
    
     - name: Remove old host-key And Add new host-key to known_hosts
       run: |
