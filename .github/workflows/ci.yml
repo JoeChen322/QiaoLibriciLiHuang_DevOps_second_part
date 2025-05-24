@@ -72,42 +72,26 @@ jobs:
         name: grayscale-sif
         path: grayscale.sif
 
-    - name: Convert job.sh to UNIX line endings
-      run: dos2unix job.sh || true
-   
-    - name: Debug private key length
-      run: echo "${#SSH_KEY}"
-      env:
-        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-
-
-    - name: Set up SSH key
+    - name: Remove old host-key And Add new host-key to known_hosts
       run: |
         mkdir -p ~/.ssh
-        chmod 700 ~/.ssh
-        echo "$SSH_KEY" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
+        touch ~/.ssh/known_hosts
+        ssh-keygen -R login.g100.cineca.it
+        ssh-keyscan -H login.g100.cineca.it >> ~/.ssh/known_hosts
 
-        echo -e "Host *\n\
-          StrictHostKeyChecking no\n\
-          UserKnownHostsFile=/dev/null\n\
-          LogLevel ERROR\n\
-          PubkeyAuthentication yes\n\
-          PreferredAuthentications=publickey\n\
-          GSSAPIAuthentication no\n\
-          HostbasedAuthentication no\n" > ~/.ssh/config
-
-        ssh-keyscan -H "$SLURM_HOST" >> ~/.ssh/known_hosts
+    - name: Transfer job script and sif file to cluster via scp
       env:
-        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        SLURM_USER: ${{ secrets.SLURM_USER }}
         SLURM_HOST: ${{ secrets.SLURM_HOST }}
-        
+        SLURM_PASSWORD: ${{ secrets.SLURM_PASSWORD }}
+      run: |
+        sshpass -p "${{ secrets.SLURM_PASSWORD }}" scp -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no grayscale.sif ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject
+        sshpass -p "${{ secrets.SLURM_PASSWORD }}" scp -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no job_script.slurm ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject
 
-    - name: Test SSH connection
-      run: ssh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} echo "✅ SSH works"
-
-    - name: Transfer files to Galileo
-      run: scp grayscale.sif job.sh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject/
-
-    - name: Submit SLURM job
-      run: ssh ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} "cd ~/seproject && sbatch job.sh"
+    - name: Submit job to cluster via ssh
+      env:
+        SLURM_USER: ${{ secrets.SLURM_USER }}
+        SLURM_HOST: ${{ secrets.SLURM_HOST }}
+        SLURM_PASSWORD: ${{ secrets.SLURM_PASSWORD }}
+      run: |
+        sshpass -p "${{ secrets.SLURM_PASSWORD }}" ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} "cd ~/seproject && dos2unix job_script.slurm && sbatch job_script.slurm"
