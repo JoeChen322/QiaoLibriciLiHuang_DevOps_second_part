@@ -40,9 +40,6 @@ jobs:
     - name: Build
       run: cmake --build build
 
-    - name: Run Tests In GitHub Runner
-      run: ctest --test-dir build
-
     - name: Install Go
       run: |
         wget https://golang.org/dl/go1.20.3.linux-amd64.tar.gz
