@@ -72,7 +72,7 @@ jobs:
     - name: Upload Singularity Image SIF File To Repository
       run: |
         export PATH=$PATH:/usr/local/go/bin
-        singularity push -U grayscale.sif library://qiao/collection/grayscale:latest
+        singularity push -U grayscale.sif library://qiao/qiao/grayscale:latest
       env:
         SYLABS_TOKEN: ${{ secrets.SYLABS_TOKEN }}
 
