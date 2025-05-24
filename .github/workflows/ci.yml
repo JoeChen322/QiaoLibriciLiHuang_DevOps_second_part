@@ -1,25 +1,15 @@
-name: Build and Run Singularity Container
+name: Remote Build Singularity Container and Submit to SLURM
 
-
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [push, pull_request]
 
 jobs:
-  build-run:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        submodules: recursive
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-    - name: Show submodule status
-      run: git submodule status
-      
     - name: Install dependencies like MPI And sshpass
       run: |
         sudo apt-get update
@@ -37,41 +27,41 @@ jobs:
           git \
           cryptsetup \
           sshpass
-          
-    - name: Install dependencies for Singularity
-      run: |
-        sudo apt-get install -y \
-          uuid-dev \
-          build-essential \
-          libseccomp-dev \
-          pkg-config \
-          squashfs-tools \
-          cryptsetup \
-          curl wget git
+
+    - name: Initialize and update Google test submodules
+      run: git submodule update --init --recursive
+
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v1
+
+    - name: Configure CMake
+      run: cmake -S . -B build
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Run Tests In GitHub Runner
+      run: ctest --test-dir build
 
     - name: Install Go
       run: |
-        export GOVERSION=1.17.3 OS=linux ARCH=amd64
-        wget -O /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz \
-          https://dl.google.com/go/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-        sudo tar -C /usr/local -xzf /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-
-    - name: Setup Go in PATH
-      run: echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc && source ~/.bashrc
-
+        wget https://golang.org/dl/go1.20.3.linux-amd64.tar.gz
+        sudo tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz
+        echo "/usr/local/go/bin" | sudo tee -a /etc/environment > /dev/null
+        echo "PATH=$PATH:/usr/local/go/bin" >> $GITHUB_ENV
+        
     - name: Install Singularity
       run: |
-        export VERSION=3.8.7
-        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz
-        sudo tar -xzf singularity-${VERSION}.tar.gz
-        cd singularity-${VERSION}
-        sudo ./mconfig
-        sudo make -C builddir
+        export PATH=$PATH:/usr/local/go/bin
+        export VERSION=3.9.9
+        wget https://github.com/sylabs/singularity/releases/download/v$VERSION/singularity-ce-$VERSION.tar.gz
+        tar -xzf singularity-ce-$VERSION.tar.gz
+        cd singularity-ce-$VERSION
+        ./mconfig
+        make -C builddir
         sudo make -C builddir install
-
-    - name: Check Singularity version
-      run: singularity --version
-
+        singularity version
+        
     - name: Build Singularity Image
       run: sudo singularity build grayscale.sif Singularity.def
 
