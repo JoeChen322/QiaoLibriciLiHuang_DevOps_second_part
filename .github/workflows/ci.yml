@@ -79,17 +79,18 @@ jobs:
       run: dos2unix job.sh || true
     
     - name: Set up SSH key
-      run: |
-        mkdir -p ~/.ssh
-        chmod 700 ~/.ssh
-        echo "$SSH_KEY" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        touch ~/.ssh/known_hosts              
-        ssh-keygen -R "$SLURM_HOST" || true 
-        ssh-keygen -R ${{ secrets.SLURM_HOST }} || true
-        ssh-keyscan -H ${{ secrets.SLURM_HOST }} >> ~/.ssh/known_hosts
-      env:
-        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+    run: |
+      mkdir -p ~/.ssh
+      chmod 700 ~/.ssh
+      echo "$SSH_KEY" > ~/.ssh/id_rsa
+      chmod 600 ~/.ssh/id_rsa
+      touch ~/.ssh/known_hosts
+      ssh-keygen -R "$SLURM_HOST" || true
+      ssh-keyscan -H "$SLURM_HOST" >> ~/.ssh/known_hosts
+    env:
+      SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SLURM_HOST: ${{ secrets.SLURM_HOST }}
+
       
     - name: Test SSH key
       run: |
