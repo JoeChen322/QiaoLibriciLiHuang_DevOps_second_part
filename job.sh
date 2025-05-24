@@ -40,4 +40,4 @@ export SINGULARITY_CACHEDIR=$TMPDIR/singularity_cache
 # Core Work Of This Job File: Do matrix multiplication by using MPI (2 tasks).
 # Run application inside singularity container (which is demaned by the project)
 # -----------------------------------------------------------------------------
-singularity exec ~/seproject/grayscale.sif mpirun -np 2 /opt/QiaoLibriciLiHuang_DevOps_second_part/main
+singularity exec ~/seproject/grayscale.sif mpirun -np 2 /opt/QiaoLibriciLiHuang_DevOps_second_part/master
