@@ -1,19 +1,15 @@
-name: Build and Run Singularity Container
+name: Remote Build Singularity Container and Submit to SLURM
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [push, pull_request]
 
 jobs:
-  build-run:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-  
+    - name: Checkout code
+      uses: actions/checkout@v2
+
     - name: Install dependencies like MPI And sshpass
       run: |
         sudo apt-get update
@@ -31,68 +27,58 @@ jobs:
           git \
           cryptsetup \
           sshpass
-          
-    - name: Checkout code with submodules
-      uses: actions/checkout@v3
-      with:
-          submodules: recursive
-    - name: Show submodule status
-      run: git submodule status
-          
-    - name: install dependencies for Singularity 
+
+    - name: Initialize and update Google test submodules
+      run: git submodule update --init --recursive
+
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v1
+
+    - name: Configure CMake
+      run: cmake -S . -B build
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Run Tests In GitHub Runner
+      run: ctest --test-dir build
+
+    - name: Install Go
       run: |
-        sudo apt-get install -y \
-          uuid-dev \
-          build-essential \
-          libseccomp-dev \
-          pkg-config \
-          squashfs-tools \
-          cryptsetup \
-          curl wget git
-    
-    - name: install Go
-      run: |
-        export GOVERSION=1.17.3 OS=linux ARCH=amd64
-        wget -O /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz \
-          https://dl.google.com/go/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-        sudo tar -C /usr/local -xzf /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-    
-    - name : setup Env for GO
-      run: echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc && source ~/.bashrc
-      
+        wget https://golang.org/dl/go1.20.3.linux-amd64.tar.gz
+        sudo tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz
+        echo "/usr/local/go/bin" | sudo tee -a /etc/environment > /dev/null
+        echo "PATH=$PATH:/usr/local/go/bin" >> $GITHUB_ENV
+        
     - name: Install Singularity
       run: |
-        export VERSION=3.8.7 && # adjust this as necessary \
-        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz \
-        && sudo tar -xzf singularity-${VERSION}.tar.gz \
-        && cd singularity-${VERSION} \
-        && sudo ./mconfig \
-        && sudo make -C builddir \
-        && sudo make -C builddir install
-      
-    - name : verifyVersion
-      run: singularity --version
-      
-    - name: Build Singularity Image
-      run: |
-        sudo singularity build grayscale.sif Singularity.def
-    
-    - name: Run Application in Singularity
-      run: |
-        singularity run grayscale.sif input output Average
-    
-    - name: Upload output images
-      uses: actions/upload-artifact@v4
-      with:
-        name: pgm-results
-        path: output/
-    
-    - name: Upload grayscale.sif
-      uses: actions/upload-artifact@v4
-      with:
-        name: grayscale-sif
-        path: grayscale.sif
+        export PATH=$PATH:/usr/local/go/bin
+        export VERSION=3.9.9
+        wget https://github.com/sylabs/singularity/releases/download/v$VERSION/singularity-ce-$VERSION.tar.gz
+        tar -xzf singularity-ce-$VERSION.tar.gz
+        cd singularity-ce-$VERSION
+        ./mconfig
+        make -C builddir
+        sudo make -C builddir install
+        singularity version
         
+    - name: Check Sylabs Token For Remote Build 
+      run: echo ${{ secrets.SYLABS_TOKEN }}
+  
+    - name: Remote Build Singularity Container
+      run: |
+        export PATH=$PATH:/usr/local/go/bin
+        echo ${{ secrets.SYLABS_TOKEN }} > ~/tokenfile
+        singularity remote login --tokenfile ~/tokenfile
+        singularity build --remote grayscale.sif Singularity.def
+   
+    - name: Upload Singularity Image SIF File To Repository
+      run: |
+        export PATH=$PATH:/usr/local/go/bin
+        singularity push -U grayscale.sif library://yanlong/collection/grayscale:latest
+      env:
+        SYLABS_TOKEN: ${{ secrets.SYLABS_TOKEN }}
+
     - name: Remove old host-key And Add new host-key to known_hosts
       run: |
         mkdir -p ~/.ssh
