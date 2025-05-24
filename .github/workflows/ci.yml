@@ -4,7 +4,7 @@ on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: self-hosted 
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
@@ -76,23 +76,9 @@ jobs:
       env:
         SYLABS_TOKEN: ${{ secrets.SYLABS_TOKEN }}
 
-    - name: Remove old host-key And Add new host-key to known_hosts
-      run: |
-        mkdir -p ~/.ssh
-        touch ~/.ssh/known_hosts
-        ssh-keygen -R login.g100.cineca.it
-        ssh-keyscan -H login.g100.cineca.it >> ~/.ssh/known_hosts
-
-    - name: Set up SSH
-      run: |
-          mkdir -p ~/.ssh
-          printf "%s\n" "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          #echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.SLURM_HOST }} >> ~/.ssh/known_hosts
-
-    - name: Submit SLURM Job
-      run: |
-          scp -i ~/.ssh/id_ed25519 job_script.slurm ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }}:~/seproject/
-          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SLURM_USER }}@${{ secrets.SLURM_HOST }} \
-            "cd ~/seproject && sbatch job_script.slurm"
+  submit-from-local:
+    runs-on: self-hosted
+    steps:
+      - name: Submit SLURM Job from local runner
+        run: |
+          ssh zqiao000@loginin.g100.cineca.it "cd ~/seproject && sbatch job_script.slurm"
