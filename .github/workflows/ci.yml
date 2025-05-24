@@ -77,7 +77,12 @@ jobs:
         
     - name: Convert job.sh to UNIX line endings
       run: dos2unix job.sh || true
-    
+   
+    - name: Debug SLURM_HOST value
+      run: echo "SLURM_HOST is [$SLURM_HOST]"
+      env:
+        SLURM_HOST: ${{ secrets.SLURM_HOST }}
+
     - name: Set up SSH key
       run: |
         mkdir -p ~/.ssh
