@@ -81,8 +81,8 @@ jobs:
     - name: Set up SSH key
       run: |
        mkdir -p ~/.ssh
-       echo "$SSH_KEY" > ~/.ssh/id_rsa
-       chmod 600 ~/.ssh/id_rsa
+       echo "$SSH_KEY" > ~/.ssh/id_ed25519
+       chmod 600 ~/.ssh/id_ed25519
        echo -e "Host *\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null\n" >> ~/.ssh/config
       env:
        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -90,7 +90,7 @@ jobs:
       
     - name: Test SSH key
       run: |
-        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+        ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
             -o GSSAPIAuthentication=no \
             -o PreferredAuthentications=publickey \
             -o PubkeyAuthentication=yes \
@@ -98,7 +98,7 @@ jobs:
 
     - name: Transfer files to Galileo via scp
       run: |
-        scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+        scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
             -o GSSAPIAuthentication=no \
             -o PreferredAuthentications=publickey \
             -o PubkeyAuthentication=yes \
@@ -106,7 +106,7 @@ jobs:
 
     - name: Submit SLURM job via SSH
       run: |
-        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+        ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
             -o GSSAPIAuthentication=no \
             -o PreferredAuthentications=publickey \
             -o PubkeyAuthentication=yes \
