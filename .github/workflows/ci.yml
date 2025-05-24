@@ -19,7 +19,25 @@ jobs:
 
     - name: Show submodule status
       run: git submodule status
-
+      
+    - name: Install dependencies like MPI And sshpass
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          mpich \
+          libmpich-dev \
+          tzdata \
+          build-essential \
+          uuid-dev \
+          libgpgme11-dev \
+          squashfs-tools \
+          libseccomp-dev \
+          wget \
+          pkg-config \
+          git \
+          cryptsetup \
+          sshpass
+          
     - name: Install dependencies for Singularity
       run: |
         sudo apt-get install -y \
