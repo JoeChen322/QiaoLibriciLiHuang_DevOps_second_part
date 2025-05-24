@@ -1,6 +1,5 @@
 name: Build and Run Singularity Container
 
-
 on:
   push:
     branches: [ master ]
