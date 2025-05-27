@@ -1,84 +1,119 @@
-name: Remote Build Singularity Container and Submit to SLURM
+# .github/workflows/build-test-containerize.yml
+name: build-test-containerize3
 
 on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+
+    # -------------------------------------------------
+    # Variabili di JOB  → visibili in TUTTI gli step
+    # -------------------------------------------------
+    env:
+      SIF_NAME:     grayscale.sif
+      GALILEO_HOST: ${{ secrets.SLURM_HOST       || secrets.GALILEO_HOST }}
+      GALILEO_USER: ${{ secrets.SLURM_USER       || secrets.GALILEO_USER }}
+      GALILEO_KEY:  ${{ secrets.SSH_PRIVATE_KEY|| secrets.GALILEO_KEY  }}
+      GALILEO_CERT: ${{ secrets.SSH_CERTIFICATE  || secrets.GALILEO_CERT }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+    # -----------------------------------------------
+    # 1) Build & unit-test
+    # -----------------------------------------------
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
 
-    - name: Install dependencies like MPI And sshpass
+    - name: Install build deps
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          cmake g++ make \
+          uuid-dev libseccomp-dev pkg-config squashfs-tools cryptsetup \
+          dos2unix curl wget openssh-client
+
+    - name: Install singularity
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          mpich \
-          libmpich-dev \
-          tzdata \
-          build-essential \
-          uuid-dev \
-          libgpgme11-dev \
-          squashfs-tools \
-          libseccomp-dev \
-          wget \
-          pkg-config \
-          git \
-          cryptsetup \
-          sshpass
+        sudo apt-get install -y singularity-container
 
-    - name: Initialize and update Google test submodules
-      run: git submodule update --init --recursive
-
-    - name: Setup CMake
-      uses: jwlawson/actions-setup-cmake@v1
-
-    - name: Configure CMake
-      run: cmake -S . -B build
-
-    - name: Build
-      run: cmake --build build
-
-    - name: Install Go
+    - name: Compile & test
       run: |
-        wget https://golang.org/dl/go1.20.3.linux-amd64.tar.gz
-        sudo tar -C /usr/local -xzf go1.20.3.linux-amd64.tar.gz
-        echo "/usr/local/go/bin" | sudo tee -a /etc/environment > /dev/null
-        echo "PATH=$PATH:/usr/local/go/bin" >> $GITHUB_ENV
-        
-    - name: Install Singularity
-      run: |
-        export PATH=$PATH:/usr/local/go/bin
-        export VERSION=3.9.9
-        wget https://github.com/sylabs/singularity/releases/download/v$VERSION/singularity-ce-$VERSION.tar.gz
-        tar -xzf singularity-ce-$VERSION.tar.gz
-        cd singularity-ce-$VERSION
-        ./mconfig
-        make -C builddir
-        sudo make -C builddir install
-        singularity version
-        
-    - name: Check Sylabs Token For Remote Build 
-      run: echo ${{ secrets.SYLABS_TOKEN }}
-  
-    - name: Remote Build Singularity Container
-      run: |
-        export PATH=$PATH:/usr/local/go/bin
-        echo ${{ secrets.SYLABS_TOKEN }} > ~/tokenfile
-        singularity remote login --tokenfile ~/tokenfile
-        singularity build --remote grayscale.sif Singularity.def
-   
-    - name: Upload Singularity Image SIF File To Repository
-      run: |
-        export PATH=$PATH:/usr/local/go/bin
-        singularity push -U grayscale.sif library://qiao/qiao/grayscale:latest
-      env:
-        SYLABS_TOKEN: ${{ secrets.SYLABS_TOKEN }}
+        ./build.sh
+        ./build/test_grayscale > test_output.txt || true
 
-  submit-from-local:
-    runs-on: self-hosted
-    steps:
-      - name: Submit SLURM Job from local runner
-        run: |
-          ssh zqiao000@login.g100.cineca.it "cd ~/seproject && sbatch job_script.slurm"
+
+    # -----------------------------------------------
+    # 2) Containerise
+    # -----------------------------------------------
+    - name: Build SIF
+      run: sudo singularity build "$SIF_NAME" Singularity.def
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.SIF_NAME }}-${{ github.sha }}.sif
+        path: ${{ env.SIF_NAME }}
+
+    # ------------------------------------------------
+    # 3) Patch job script, copia su Galileo, sbatch
+    # ------------------------------------------------
+    - name: Patch SLURM paths
+      if: ${{ !github.event.pull_request }}   # solo su push in default branch
+      run: |
+        # lasciamo $SCRATCH da espandere sul nodo Galileo → apici *singoli*
+        sed -i \
+          -e 's|^IN_HOST=.*|IN_HOST=$SCRATCH/seproject/images|' \
+          -e 's|^OUT_HOST=.*|OUT_HOST=$SCRATCH/seproject/result|' \
+          job.sh
+
+    - name: Copy SIF & submit job
+      if: ${{ !github.event.pull_request }}
+      run: |
+        set -euo pipefail
+
+        # --- SSH material ---------------------------------------------------
+        mkdir -p ~/.ssh
+        printf '%s\n' "$GALILEO_KEY" > ~/.ssh/my_key
+        chmod 600 ~/.ssh/my_key
+
+        if [[ -n "${GALILEO_CERT:-}" ]]; then
+          printf '%s\n' "$GALILEO_CERT" > ~/.ssh/my_key-cert.pub
+          chmod 644 ~/.ssh/my_key-cert.pub
+        fi
+
+        { echo "Host galileo"
+          echo "  HostName $GALILEO_HOST"
+          echo "  User $GALILEO_USER"
+          echo "  IdentityFile ~/.ssh/my_key"
+          echo "  IdentitiesOnly yes"
+          echo "  StrictHostKeyChecking no"
+          echo "  UserKnownHostsFile /dev/null"
+          [[ -n "${GALILEO_CERT:-}" ]] && \
+            echo "  CertificateFile ~/.ssh/my_key-cert.pub"
+        } > ~/.ssh/config
+        chmod 600 ~/.ssh/config
+        # --------------------------------------------------------------------
+
+        # Copia container + script
+        scp -F ~/.ssh/config "$SIF_NAME" job.sh  galileo:~/seproject/
+
+        # Lancio e polling
+        JOB_ID=$(ssh -F ~/.ssh/config galileo \
+                   "cd ~/seproject && sbatch job.sh" | awk '{print $4}')
+        echo "SLURM job id: $JOB_ID"
+
+        echo "Waiting for SLURM job $JOB_ID …"
+        while true; do
+          STATE=$(ssh -F ~/.ssh/config galileo \
+                    "sacct -j $JOB_ID -n -o State" | awk 'NR==1{print $1}')
+          [[ -z $STATE ]] && STATE=PENDING
+          echo "  -> current state: $STATE"
+          case "$STATE" in
+            PENDING|CONFIGURING|RUNNING|COMPLETING) sleep 20 ;;
+            COMPLETED) echo 'Job finished OK';  break ;;
+            FAILED|CANCELLED|TIMEOUT|NODE_FAIL|PREEMPTED)
+                      echo 'Job failed'; exit 1 ;;
+            *)        echo "Unknown state $STATE"; exit 2 ;;
+          esac
+        done
