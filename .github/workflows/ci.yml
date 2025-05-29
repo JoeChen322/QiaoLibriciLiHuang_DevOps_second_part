@@ -1,4 +1,4 @@
-name: Build and Run Singularity Container
+name: Build and Run Singularity Container with SSH Upload & Test Log
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-run:
-    runs-on:  ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
@@ -24,10 +24,14 @@ jobs:
 
     - name: Install dependencies for Singularity
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          uuid-dev build-essential libseccomp-dev pkg-config \
-          squashfs-tools cryptsetup curl wget git uidmap runc openssh-client
+        sudo apt-get update && sudo apt-get install -y \
+          uuid-dev \
+          build-essential \
+          libseccomp-dev \
+          pkg-config \
+          squashfs-tools \
+          cryptsetup \
+          curl wget git sshpass dos2unix
 
     - name: Install Go
       run: |
@@ -35,22 +39,30 @@ jobs:
         wget -O /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz \
           https://dl.google.com/go/go${GOVERSION}.${OS}-${ARCH}.tar.gz
         sudo tar -C /usr/local -xzf /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-
-    - name: Setup Go Environment
-      run: echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc && source ~/.bashrc
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
 
     - name: Install Singularity
       run: |
-        wget https://github.com/sylabs/singularity/releases/download/v4.1.3/singularity-ce_4.1.3-focal_amd64.deb
-        sudo apt-get install -y libfuse2 fuse2fs
-        sudo dpkg -i singularity-ce_4.1.3-focal_amd64.deb || true
-        sudo apt-get install -f -y
+        export VERSION=3.8.7
+        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz
+        tar -xzf singularity-${VERSION}.tar.gz
+        cd singularity-${VERSION}
+        ./mconfig && make -C builddir && sudo make -C builddir install
 
     - name: Verify Singularity version
       run: singularity --version
 
     - name: Build Singularity Image
       run: sudo singularity build grayscale.sif Singularity.def
+
+    - name: Run Application in Singularity
+      run: |
+        singularity run grayscale.sif input output Average
+
+    - name: Run Unit Tests and Capture Output
+      run: |
+        ./build.sh
+        ./build/test_grayscale > test_output.txt || true
 
     - name: Upload output images
       uses: actions/upload-artifact@v4
@@ -64,41 +76,39 @@ jobs:
         name: grayscale-sif
         path: grayscale.sif
 
+    - name: Upload test output log
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-log
+        path: test_output.txt
+
     - name: Convert job.sh to UNIX line endings
       run: dos2unix job.sh || true
 
-    - name: Setup SSH key, cert, and config
+    - name: Remove old host key and add new
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.G100_SSH_KEY }}" > ~/.ssh/my_key
-        echo "${{ secrets.G100_SSH_CERT }}" >> ~/.ssh/my_key
-        #echo "${{ secrets.G100_SSH_PUB }}" > ~/.ssh/my_key.pub
-        ssh-keygen -R login.g100.cineca.it
-        ssh-keyscan -H login.g100.cineca.it >> ~/.ssh/known_hosts
-        chmod 600 ~/.ssh/my_key
-        #chmod 600 ~/.ssh/my_key-cert.pub ~/.ssh/my_key.pub
-
-        cat <<EOF > ~/.ssh/config
-        Host galileo
-          HostName ${{ secrets.SLURM_HOST }}
-          User ${{ secrets.SLURM_USER }}
-          IdentityFile ~/.ssh/my_key
-          #CertificateFile ~/.ssh/my_key-cert.pub
-          IdentitiesOnly yes
-          StrictHostKeyChecking no
-          UserKnownHostsFile=/dev/null
-        EOF
-
-        chmod 600 ~/.ssh/config
-
-    - name: Ensure ~/seproject exists on Galileo
-      run: |
-        ssh -F ~/.ssh/config galileo "mkdir -p ~/seproject"
+        touch ~/.ssh/known_hosts
+        ssh-keygen -R ${{ secrets.SLURM_HOST }} || true
+        ssh-keyscan -H ${{ secrets.SLURM_HOST }} >> ~/.ssh/known_hosts
 
     - name: Transfer job script and sif file to cluster via scp
+      env:
+        SLURM_USER: ${{ secrets.SLURM_USER }}
+        SLURM_HOST: ${{ secrets.SLURM_HOST }}
+        SLURM_PASSWORD: ${{ secrets.SLURM_PASSWORD }}
       run: |
-        scp -F ~/.ssh/config grayscale.sif job.sh galileo:~/seproject/
+        sshpass -p "$SLURM_PASSWORD" scp \
+          -o UserKnownHostsFile=/dev/null \
+          -o StrictHostKeyChecking=no \
+          -o PubkeyAuthentication=no \
+          grayscale.sif job.sh $SLURM_USER@$SLURM_HOST:~/seproject/
 
     - name: Submit job to cluster via SSH
+      env:
+        SLURM_USER: ${{ secrets.SLURM_USER }}
+        SLURM_HOST: ${{ secrets.SLURM_HOST }}
+        SLURM_PASSWORD: ${{ secrets.SLURM_PASSWORD }}
       run: |
-        ssh -F ~/.ssh/config galileo "cd ~/seproject && sbatch job.sh"
+        sshpass -p "$SLURM_PASSWORD" ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $SLURM_USER@$SLURM_HOST \
+          "cd ~/seproject && sbatch job.sh"
