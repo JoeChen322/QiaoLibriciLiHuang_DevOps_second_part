@@ -1,114 +1,119 @@
-name: Build and Run Singularity Container with SSH Upload & Test Log
+# .github/workflows/build-test-containerize.yml
+name: build-test-containerize3
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [push, pull_request]
 
 jobs:
-  build-run:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-24.04
+
+    # -------------------------------------------------
+    # Variabili di JOB  → visibili in TUTTI gli step
+    # -------------------------------------------------
+    env:
+      SIF_NAME:     grayscale.sif
+      GALILEO_HOST: ${{ secrets.SLURM_HOST       || secrets.GALILEO_HOST }}
+      GALILEO_USER: ${{ secrets.SLURM_USER       || secrets.GALILEO_USER }}
+      GALILEO_KEY:  ${{ secrets.SSH_PRIVATE_KEY|| secrets.GALILEO_KEY  }}
+      GALILEO_CERT: ${{ secrets.SSH_CERTIFICATE  || secrets.GALILEO_CERT }}
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-
-    - name: Checkout code with submodules
-      uses: actions/checkout@v3
+    # -----------------------------------------------
+    # 1) Build & unit-test
+    # -----------------------------------------------
+    - uses: actions/checkout@v3
       with:
         submodules: recursive
 
-    - name: Show submodule status
-      run: git submodule status
-
-    - name: Install dependencies for Singularity
+    - name: Install build deps
       run: |
-        sudo apt-get update && sudo apt-get install -y \
-          uuid-dev \
-          build-essential \
-          libseccomp-dev \
-          pkg-config \
-          squashfs-tools \
-          cryptsetup \
-          curl wget git sshpass dos2unix
+        sudo apt update
+        sudo apt install -y \
+          cmake g++ make \
+          uuid-dev libseccomp-dev pkg-config squashfs-tools cryptsetup \
+          dos2unix curl wget openssh-client
 
-    - name: Install Go
+    - name: Install singularity
       run: |
-        export GOVERSION=1.17.3 OS=linux ARCH=amd64
-        wget -O /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz \
-          https://dl.google.com/go/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-        sudo tar -C /usr/local -xzf /tmp/go${GOVERSION}.${OS}-${ARCH}.tar.gz
-        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        sudo apt-get update
+        sudo apt-get install -y singularity-container
 
-    - name: Install Singularity
-      run: |
-        export VERSION=3.8.7
-        wget https://github.com/hpcng/singularity/releases/download/v${VERSION}/singularity-${VERSION}.tar.gz
-        tar -xzf singularity-${VERSION}.tar.gz
-        cd singularity-${VERSION}
-        ./mconfig && make -C builddir && sudo make -C builddir install
-
-    - name: Verify Singularity version
-      run: singularity --version
-
-    - name: Build Singularity Image
-      run: sudo singularity build grayscale.sif Singularity.def
-
-    - name: Run Application in Singularity
-      run: |
-        singularity run grayscale.sif input output Average
-
-    - name: Run Unit Tests and Capture Output
+    - name: Compile & test
       run: |
         ./build.sh
         ./build/test_grayscale > test_output.txt || true
 
-    - name: Upload output images
-      uses: actions/upload-artifact@v4
+
+    # -----------------------------------------------
+    # 2) Containerise
+    # -----------------------------------------------
+    - name: Build SIF
+      run: sudo singularity build "$SIF_NAME" Singularity.def
+
+    - uses: actions/upload-artifact@v4
       with:
-        name: pgm-results
-        path: output/
+        name: ${{ env.SIF_NAME }}-${{ github.sha }}.sif
+        path: ${{ env.SIF_NAME }}
 
-    - name: Upload grayscale.sif
-      uses: actions/upload-artifact@v4
-      with:
-        name: grayscale-sif
-        path: grayscale.sif
-
-    - name: Upload test output log
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-log
-        path: test_output.txt
-
-    - name: Convert job.sh to UNIX line endings
-      run: dos2unix job.sh || true
-
-    - name: Remove old host key and add new
+    # ------------------------------------------------
+    # 3) Patch job script, copia su Galileo, sbatch
+    # ------------------------------------------------
+    - name: Patch SLURM paths
+      if: ${{ !github.event.pull_request }}   # solo su push in default branch
       run: |
+        # lasciamo $SCRATCH da espandere sul nodo Galileo → apici *singoli*
+        sed -i \
+          -e 's|^IN_HOST=.*|IN_HOST=$SCRATCH/seproject/images|' \
+          -e 's|^OUT_HOST=.*|OUT_HOST=$SCRATCH/seproject/result|' \
+          job.sh
+
+    - name: Copy SIF & submit job
+      if: ${{ !github.event.pull_request }}
+      run: |
+        set -euo pipefail
+
+        # --- SSH material ---------------------------------------------------
         mkdir -p ~/.ssh
-        touch ~/.ssh/known_hosts
-        ssh-keygen -R ${{ secrets.SLURM_HOST }} || true
-        ssh-keyscan -H ${{ secrets.SLURM_HOST }} >> ~/.ssh/known_hosts
+        printf '%s\n' "$GALILEO_KEY" > ~/.ssh/my_key
+        chmod 600 ~/.ssh/my_key
 
-    - name: Transfer job script and sif file to cluster via scp
-      env:
-        SLURM_USER: ${{ secrets.SLURM_USER }}
-        SLURM_HOST: ${{ secrets.SLURM_HOST }}
-        SLURM_PASSWORD: ${{ secrets.SLURM_PASSWORD }}
-      run: |
-        sshpass -p "$SLURM_PASSWORD" scp \
-          -o UserKnownHostsFile=/dev/null \
-          -o StrictHostKeyChecking=no \
-          -o PubkeyAuthentication=no \
-          grayscale.sif job.sh $SLURM_USER@$SLURM_HOST:~/seproject/
+        if [[ -n "${GALILEO_CERT:-}" ]]; then
+          printf '%s\n' "$GALILEO_CERT" > ~/.ssh/my_key-cert.pub
+          chmod 644 ~/.ssh/my_key-cert.pub
+        fi
 
-    - name: Submit job to cluster via SSH
-      env:
-        SLURM_USER: ${{ secrets.SLURM_USER }}
-        SLURM_HOST: ${{ secrets.SLURM_HOST }}
-        SLURM_PASSWORD: ${{ secrets.SLURM_PASSWORD }}
-      run: |
-        sshpass -p "$SLURM_PASSWORD" ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $SLURM_USER@$SLURM_HOST \
-          "cd ~/seproject && sbatch job.sh"
+        { echo "Host galileo"
+          echo "  HostName $GALILEO_HOST"
+          echo "  User $GALILEO_USER"
+          echo "  IdentityFile ~/.ssh/my_key"
+          echo "  IdentitiesOnly yes"
+          echo "  StrictHostKeyChecking no"
+          echo "  UserKnownHostsFile /dev/null"
+          [[ -n "${GALILEO_CERT:-}" ]] && \
+            echo "  CertificateFile ~/.ssh/my_key-cert.pub"
+        } > ~/.ssh/config
+        chmod 600 ~/.ssh/config
+        # --------------------------------------------------------------------
+
+        # Copia container + script
+        scp -F ~/.ssh/config "$SIF_NAME" job.sh  galileo:~/seproject/
+
+        # Lancio e polling
+        JOB_ID=$(ssh -F ~/.ssh/config galileo \
+                   "cd ~/seproject && sbatch job.sh" | awk '{print $4}')
+        echo "SLURM job id: $JOB_ID"
+
+        echo "Waiting for SLURM job $JOB_ID …"
+        while true; do
+          STATE=$(ssh -F ~/.ssh/config galileo \
+                    "sacct -j $JOB_ID -n -o State" | awk 'NR==1{print $1}')
+          [[ -z $STATE ]] && STATE=PENDING
+          echo "  -> current state: $STATE"
+          case "$STATE" in
+            PENDING|CONFIGURING|RUNNING|COMPLETING) sleep 20 ;;
+            COMPLETED) echo 'Job finished OK';  break ;;
+            FAILED|CANCELLED|TIMEOUT|NODE_FAIL|PREEMPTED)
+                      echo 'Job failed'; exit 1 ;;
+            *)        echo "Unknown state $STATE"; exit 2 ;;
+          esac
+        done
