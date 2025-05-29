@@ -73,6 +73,8 @@ jobs:
         echo "${{ secrets.G100_SSH_KEY }}" > ~/.ssh/my_key
         echo "${{ secrets.G100_SSH_CERT }}" >> ~/.ssh/my_key
         #echo "${{ secrets.G100_SSH_PUB }}" > ~/.ssh/my_key.pub
+        ssh-keygen -R login.g100.cineca.it
+        ssh-keyscan -H login.g100.cineca.it >> ~/.ssh/known_hosts
         chmod 600 ~/.ssh/my_key
         #chmod 600 ~/.ssh/my_key-cert.pub ~/.ssh/my_key.pub
 
